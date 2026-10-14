@@ -1225,6 +1225,28 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::WaitRegMem: {
                 const auto* wait_reg_mem = reinterpret_cast<const PM4CmdWaitRegMem*>(header);
+                // Opt-in GoW III startup workaround. The intro's second submission can
+                // wait for the CPU flip acknowledgement to differ from frame zero even
+                // after that flip has already been acknowledged. Its frame-one EOP is
+                // behind the wait, so neither side can make progress. Only bypass this
+                // exact bootstrap gate once, not arbitrary guest memory waits.
+                static bool bootstrap_gate_released = false;
+                const char* bootstrap_gate = std::getenv("GOW3_BOOTSTRAP_FLIP_GATE");
+                if (!bootstrap_gate_released && bootstrap_gate && *bootstrap_gate == '1' &&
+                    dcb.size() >= 13 &&
+                    wait_reg_mem->mem_space.Value() == PM4CmdWaitRegMem::MemSpace::Memory &&
+                    wait_reg_mem->function.Value() == PM4CmdWaitRegMem::Function::NotEqual &&
+                    wait_reg_mem->ref == 0 && wait_reg_mem->mask == 0xffffffffu &&
+                    (wait_reg_mem->Address<VAddr>() & 63) == 40 &&
+                    dcb[7] == 0xc0044700u && dcb[11] == 1 && dcb[12] == 0) {
+                    const auto* next_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(dcb.data() + 7);
+                    if (reinterpret_cast<VAddr>(next_eop->Address<u32>()) + 24 == wait_reg_mem->Address<VAddr>() &&
+                        *wait_reg_mem->Address<u32*>() == 0) {
+                        bootstrap_gate_released = true;
+                        std::printf("GoW III: released acknowledged frame-zero bootstrap flip gate\n");
+                        break;
+                    }
+                }
                 // ASSERT(wait_reg_mem->engine.Value() == PM4CmdWaitRegMem::Engine::Me);
                 // Optimization: VO label waits are special because the emulator
                 // will write to the label when presentation is finished. So if
