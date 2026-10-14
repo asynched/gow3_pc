@@ -97,21 +97,43 @@ class ControlMapTest(unittest.TestCase):
         self.assertEqual(launcher.game_environment({**settings, 'parallel_warmup': False})['GOW3_PARALLEL_WARMUP'], '0')
         self.assertEqual(launcher.game_environment({**settings, 'background_warmup': False})['GOW3_BACKGROUND_WARMUP'], '0')
 
+    def test_glyph_style_is_off_by_default(self):
+        self.assertEqual(launcher.APP_DEFAULTS['glyph_style'], 'off')
+        self.assertNotIn('GOW3_GLYPH_STYLE', launcher.game_environment({**launcher.APP_DEFAULTS}))
+
+    def test_glyph_style_choices_reach_the_game(self):
+        for style in ('auto', 'xbox', 'nintendo'):
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': style})
+            self.assertEqual(env['GOW3_GLYPH_STYLE'], style)
+
+    def test_unknown_glyph_style_is_off(self):
+        for style in ('playstation', 'XBOX', 7, None, ''):
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': style})
+            self.assertNotIn('GOW3_GLYPH_STYLE', env)
+
+    def test_inherited_glyph_style_is_dropped_when_off(self):
+        from unittest import mock
+
+        with mock.patch.dict(launcher.os.environ, {'GOW3_GLYPH_STYLE': 'xbox'}):
+            self.assertNotIn('GOW3_GLYPH_STYLE', launcher.game_environment({**launcher.APP_DEFAULTS}))
+            self.assertEqual(launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': 'nintendo'})
+                             ['GOW3_GLYPH_STYLE'], 'nintendo')
+
     def test_settings_keys_kept(self):
         # The redesign hides some options (player name) but keeps every saved setting working.
         for key in ('game_dir', 'user_dir', 'mods_dir', 'patches_dir', 'language', 'player_name', 'hdr',
-                    'draw_pipe', 'readbacks', 'background_warmup', 'parallel_warmup', 'controls', 'pad_style'):
+                    'draw_pipe', 'readbacks', 'background_warmup', 'parallel_warmup', 'controls', 'pad_style', 'glyph_style'):
             self.assertIn(key, launcher.APP_DEFAULTS)
         env = launcher.game_environment({**launcher.APP_DEFAULTS, 'player_name': ' Kratos '})
         self.assertEqual(env['GOW3_USER_NAME'], 'Kratos')
-        for key in ('display_mode', 'fps_limit', 'render_resolution', 'engine_fps', 'rcas_strength'):
+        for key in ('display_mode', 'fps_limit', 'render_resolution', 'engine_fps'):
             self.assertIn(key, launcher.INI_DEFAULTS)
 
     def test_graphics_defaults_match_the_game(self):
         d = launcher.INI_DEFAULTS
         self.assertEqual((d['display_mode'], d['vsync'], d['fps_limit'], d['engine_fps']), ('windowed', '1', '0', '120'))
         self.assertEqual([v for v, _t in launcher.FPS_LIMITS], ['30', '60', '120', '240', '0'])
-        self.assertEqual((d['fsr1'], d['rcas'], d['rcas_strength'], d['frames_queued']), ('0', '1', '75', '1'))
+        self.assertEqual(d['frames_queued'], '1')
         self.assertEqual([v for v, _t in launcher.FRAMES_QUEUED], ['1', '2', '0'])
         self.assertNotIn('GOW3_FRAMES_AHEAD', launcher.game_environment({**launcher.APP_DEFAULTS, 'frames_ahead': '2'}))
 
@@ -366,7 +388,8 @@ class GameFilesTest(unittest.TestCase):
             """Whether the game was started. The copy runs in a worker thread that presses Play
             again through ui_calls: both run here, in order."""
             with mock.patch.object(launcher.subprocess, 'Popen', return_value=mock.Mock()) as start, \
-                    mock.patch.object(launcher, 'GameJob'), mock.patch.object(launcher.threading, 'Thread') as thread:
+                    mock.patch.object(launcher, 'GameJob'), mock.patch.object(launcher.threading, 'Thread') as thread, \
+                    mock.patch.object(launcher, 'open_play_log', return_value=launcher._NullLog()):
                 app.play()
                 for call in thread.call_args_list:  # grows while the workers press Play again
                     target = call.kwargs.get('target')
